@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project version="4">
-  <component name="ProjectModuleManager">
-    <modules>
-      <module fileurl="file://$USER_HOME$/repos/blocks-examples/.idea/blocks-examples.iml" filepath="$USER_HOME$/repos/blocks-examples/.idea/blocks-examples.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/hft_lstm_prediction.iml" filepath="$PROJECT_DIR$/.idea/hft_lstm_prediction.iml" />
-    </modules>
-  </component>
-</project>
