@@ -44,8 +44,6 @@ def parse_data_into_batches(data, batch_size):
     data['CloseTarget'] = close_target
     data.drop(len(data) - 1, inplace=True)
 
-    beforegroup = None
-
     # The very first line of each batch is built from the last line from the latter one
     # if is the very one, then calculate the mean and create a new one
     x = []
@@ -58,8 +56,10 @@ def parse_data_into_batches(data, batch_size):
 
         print("i: {}, group: {}, group_len: {}".format(i, group[0], len(group[1])))
         # the day might be a holiday, hence no info will come
+
         if len(group[1]) == 0:
             continue
+
         day = group[1]
         y_day = pandas.DataFrame(day.CloseTarget).values.astype(dtype=theano.config.floatX)
         x_day = day.drop(['CloseTarget', 'Date'], axis=1).values.astype(dtype=theano.config.floatX)
@@ -83,7 +83,6 @@ def parse_data_into_batches(data, batch_size):
                 except ValueError:
                     print("An error would happen, this occurs because this day does not have "
                           "as many measures as the others")
-                    pass
 
             xnp = xnp.swapaxes(0, 1)
             ynp = ynp.swapaxes(0, 1)
@@ -177,31 +176,35 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
 
     # we need to provide data for the LSTM layer of size 4 * ltsm_dim, see
     # LSTM layer documentation for the explanation
-    x_to_h = Linear(6, 6 * lstm_dim * 4, name='x_to_h',
+    x_to_h = Linear(6, lstm_dim * 4, name='x_to_h',
                     weights_init=IsotropicGaussian(),
                     biases_init=Constant(0.0))
-    lstm = LSTM(6 * lstm_dim, name='lstm',
+    lstm = LSTM(lstm_dim, name='lstm',
                 weights_init=IsotropicGaussian(),
                 biases_init=Constant(0.0), )
-    h_to_o = Linear(6 * lstm_dim, 1, name='h_to_o',
+    h_to_o = Linear(lstm_dim, 1, name='h_to_o',
                     weights_init=IsotropicGaussian(),
                     biases_init=Constant(0.0))
 
     x_transform = x_to_h.apply(x)
     h, c = lstm.apply(x_transform)
 
-    # only values of hidden units of the last timeframe are used for
-    # the classification
     # y_hat = h_to_o.apply(h[-1])
     y_hat = h_to_o.apply(h)
     y_hat.name = 'y_hat'
 
-    cost = SquaredError().apply(y, y_hat)
-    cost.name = 'cost'
-
     lstm.initialize()
     x_to_h.initialize()
     h_to_o.initialize()
+
+    f = theano.function([x], y_hat)
+
+    # pdb.set_trace()
+
+    # y = f(data_test['x'][0])
+
+    cost = SquaredError().apply(y, y_hat)
+    cost.name = 'cost'
 
     cg = ComputationGraph(cost)
 
