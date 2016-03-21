@@ -1,31 +1,30 @@
 from __future__ import print_function
 
-import random
-import numpy as np
 import theano
 import theano.tensor as T
+from fuel.datasets.base import IndexableDataset
 
 from fuel.streams import DataStream
-from fuel.datasets import IterableDataset
+from fuel.datasets import IndexableDataset
+from fuel.schemes import SequentialScheme
+from fuel.transformers import Transformer
 
-from blocks.bricks import Linear, Logistic
+from blocks.bricks import Linear
 from blocks.bricks.recurrent import LSTM
 from blocks.bricks.cost import SquaredError
 from blocks.initialization import Constant, IsotropicGaussian
 from blocks.algorithms import GradientDescent, Adam
 from blocks.graph import ComputationGraph
 from blocks.extensions import FinishAfter, Printing, ProgressBar
-from blocks.extensions.saveload import Checkpoint, Load
+from blocks.extensions.saveload import Checkpoint
 from blocks.extensions.monitoring import (DataStreamMonitoring,
                                           TrainingDataMonitoring)
 from blocks.main_loop import MainLoop
-from blocks.serialization import load
 from blocks.model import Model
 
-from itertools import ifilter
-
 import pandas
-import numpy
+from collections import OrderedDict
+import numpy as np
 
 import pdb
 
@@ -36,160 +35,91 @@ except ImportError:
     BOKEH_AVAILABLE = False
 
 
-def parse_data_into_batches(data, batch_size):
-    # The batch's size define how many days it will contain
-    grouped = data.groupby(pandas.Grouper(key="Date", freq="1B"))
-
-    close_target = pandas.DataFrame(data.Close).drop(0).reset_index(drop=True)
-    data['CloseTarget'] = close_target
-    data.drop(len(data) - 1, inplace=True)
-
-    # The very first line of each batch is built from the last line from the latter one
-    # if is the very one, then calculate the mean and create a new one
-    x = []
-    y = []
-    x_batch = []
-    y_batch = []
-    print("batch_size: {}".format(batch_size))
-
-    for i, group in zip(range(len(grouped)), grouped):
-
-        print("i: {}, group: {}, group_len: {}".format(i, group[0], len(group[1])))
-        # the day might be a holiday, hence no info will come
-
-        if len(group[1]) == 0:
-            continue
-
-        day = group[1]
-        y_day = pandas.DataFrame(day.CloseTarget).values.astype(dtype=theano.config.floatX)
-        x_day = day.drop(['CloseTarget', 'Date'], axis=1).values.astype(dtype=theano.config.floatX)
-
-        print("shapes = x_day {} y_day {}".format(x_day.shape, y_day.shape))
-
-        # new batch
-        if (len(x_batch) + 1) == batch_size or (len(grouped)-1) == i:
-
-            xnp = numpy.zeros((batch_size, x_day.shape[0], x_day.shape[1]), dtype=theano.config.floatX)
-            # ynp = numpy.zeros((batch_size, y_day.shape[0]), dtype=theano.config.floatX)
-            ynp = numpy.zeros((batch_size, y_day.shape[0], y_day.shape[1]), dtype=theano.config.floatX)
-
-            print("shapes = xnp {} ynp {}".format(xnp.shape, ynp.shape))
-            for index, xb, yb in zip(range(len(x_batch)), x_batch, y_batch):
-                # this should be removed!! just to by pass the error and try to make it work
-                try:
-                    xnp[index] = xb
-                    # ynp[index] = yb.reshape((yb.shape[0], yb.shape[1]))
-                    ynp[index] = yb
-                except ValueError:
-                    print("An error would happen, this occurs because this day does not have "
-                          "as many measures as the others")
-
-            xnp = xnp.swapaxes(0, 1)
-            ynp = ynp.swapaxes(0, 1)
-
-            print("xnp {} ynp {}".format(xnp.shape, ynp.shape))
-
-            x.append(xnp)
-            y.append(ynp)
-            x_batch = []
-            y_batch = []
-
-        x_batch.append(x_day)
-        y_batch.append(y_day)
-
-    # For RNN, batches are formatted in the following way
-    # x: (Seq. Length, Batch Size, Char. Dimensions)
-    # y: (Batch Size, Output Dimension)
-
-    # it seems that no conversion to numpy obj is necessary
-    # as Fuel uses iterable objects (so lists of numpy array are ok)
-    # xnp = numpy.zeros((len(x_batch), x_batch[0].shape[0], x_batch[0].shape[1]))
-    # for i in xrange(len(x_batch)):
-    #     xnp[i] = x_batch[i]
-    return {"x": x, "y": y}
-
-
 def load_data(data_path):
     """
-    :param data_path:
-    :return: two DataStream, the first is the train and the other is the test
+    :param data_path: Path to data
+    :return: two DataStreams, the first is the train and the other is the test
     """
-    data = pandas.read_csv(data_path + "dados_petr.csv", sep=";")
+    data = pandas.read_csv(data_path + 'dados_petr.csv', sep=';')
     data['Date'] = pandas.to_datetime(data.Date, dayfirst=True)
-    data.sort_values('Date')
+    data.sort_values('Date', inplace=True)
 
-    # separate train data from test data
-    loaded_train = data[data.Date.map(lambda x: x.month != 10)]
-    loaded_test = data[data.Date.map(lambda x: x.month == 10)].reset_index(drop=True)
+    # Create the target column, that is the Close value from the next row
+    data['CloseTarget'] = pandas.DataFrame(data.Close).drop(0).reset_index(drop=True)
 
-    return {"train": loaded_train, "test": loaded_test}
+    # Remove the row as it there is no target to point (CloseTarget will be NaN)
+    data.drop(len(data) - 1, inplace=True)
+
+    # separate train data from test data and delete column Date (no longer needed)
+    loaded_train = data[data.Date.map(lambda x: x.month != 10)].copy().drop(['Date'], axis=1)
+    loaded_test = data[data.Date.map(lambda x: x.month == 10)].copy().drop(['Date'], axis=1).reset_index(drop=True)
+
+    return {'train': loaded_train, 'test': loaded_test}
+
+
+def parse_pandas_to_fuel(data_pandas):
+
+    features = data_pandas.drop('CloseTarget', axis=1).values.astype(theano.config.floatX)
+    targets = data_pandas['CloseTarget'].values.astype(theano.config.floatX)[:, np.newaxis]
+
+    print("features {} targets {}".format(features.shape, targets.shape))
+
+    return IndexableDataset(indexables=OrderedDict([('x', features), ('y', targets)]),
+                            axis_labels=OrderedDict([('x',
+                                                     tuple(data_pandas.drop('CloseTarget', axis=1).columns)),
+                                                    ('y', tuple('CloseTarget'))]))
+
+
+class SwappingTransformer(Transformer):
+
+    def transform_example(self, example):
+        return example
+
+    def transform_batch(self, batch):
+        return batch
 
 
 def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
-    # The file that contaitns the model saved is a concatenation of information passed
-    if save_path.endswith("//") is False:
-        save_path += "//"
+    # The file that contains the model saved is a concatenation of information passed
+    if save_path.endswith('//') is False:
+        save_path += '//'
 
-    execution_name = "lstm" + "_" + str(lstm_dim) + "_" + str(batch_size) + "_" + str(num_epochs)
+    execution_name = 'lstm' + '_' + str(lstm_dim) + '_' + str(batch_size) + '_' + str(num_epochs)
 
     save_file = save_path + execution_name
 
-    # try:
-    #     with open(save_file, 'rb') as loaded_file:
-    #         main_loop = load(loaded_file)
-    #
-    #         # import pdb
-    #         # pdb.set_trace()
-    #
-    #         x = list(ifilter(lambda l: l.name == 'x', main_loop.model.inputs))[0]
-    #
-    #         y = list(ifilter(lambda l: l.name == 'logistic_apply_output', main_loop.model.intermediary_variables))[0]
-    #
-    #         f = theano.function([x], y)
-    #
-    #         y = f(np.asarray([
-    #             [[0], [1], [1]],
-    #             [[0], [1], [0]],
-    #             [[0], [1], [0]],
-    #         ], dtype=theano.config.floatX))
-    #
-    #         print(y)
-    #
-    #         return main_loop
-    # except IOError:
-    #     print('There was no previous training!')
-
     d = load_data(data_path)
 
-    data_train = parse_data_into_batches(d["train"], batch_size)
-    data_test = parse_data_into_batches(d["test"], batch_size)
+    dataset_train = parse_pandas_to_fuel(d['train'])
+    dataset_test = parse_pandas_to_fuel(d['test'])
 
-    dataset_train = IterableDataset(data_train)
-    dataset_test = IterableDataset(data_test)
+    stream_train = DataStream(dataset=dataset_train,
+                              iteration_scheme=SequentialScheme(examples=dataset_train.num_examples,
+                                                                batch_size=batch_size))
+    stream_train = SwappingTransformer(stream_train, produces_examples=False)
 
-    stream_train = DataStream(dataset=dataset_train)
-    stream_test = DataStream(dataset=dataset_test)
+    stream_test = DataStream(dataset=dataset_test,
+                             iteration_scheme=SequentialScheme(examples=dataset_test.num_examples,
+                                                               batch_size=batch_size))
+    stream_test = SwappingTransformer(stream_test, produces_examples=False)
 
-    x = T.tensor3('x')
-    # y = T.matrix('y')
-    y = T.tensor3('y')
+    x = T.matrix('x')
+    y = T.matrix('y')
 
-    # we need to provide data for the LSTM layer of size 4 * ltsm_dim, see
+    # we need to provide data for the LSTM layer of size 4 * lstm_dim, see
     # LSTM layer documentation for the explanation
     x_to_h = Linear(6, lstm_dim * 4, name='x_to_h',
                     weights_init=IsotropicGaussian(),
                     biases_init=Constant(0.0))
     lstm = LSTM(lstm_dim, name='lstm',
                 weights_init=IsotropicGaussian(),
-                biases_init=Constant(0.0), )
+                biases_init=Constant(0.0))
     h_to_o = Linear(lstm_dim, 1, name='h_to_o',
                     weights_init=IsotropicGaussian(),
                     biases_init=Constant(0.0))
 
     x_transform = x_to_h.apply(x)
     h, c = lstm.apply(x_transform)
-
-    # y_hat = h_to_o.apply(h[-1])
     y_hat = h_to_o.apply(h)
     y_hat.name = 'y_hat'
 
@@ -197,11 +127,15 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     x_to_h.initialize()
     h_to_o.initialize()
 
+    # start of testing
     f = theano.function([x], y_hat)
 
-    # pdb.set_trace()
-
-    # y = f(data_test['x'][0])
+    for data in stream_test.get_epoch_iterator():
+        y_test = f(data[0])
+        print("y_test {}".format(y_test))
+        print("y shape {}".format(y_test.shape))
+        return
+    # end of testing
 
     cost = SquaredError().apply(y, y_hat)
     cost.name = 'cost'
@@ -209,8 +143,8 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     cg = ComputationGraph(cost)
 
     algorithm = GradientDescent(cost=cost, parameters=cg.parameters, step_rule=Adam())
-    test_monitor = DataStreamMonitoring(variables=[cost], data_stream=stream_test, prefix="test")
-    train_monitor = TrainingDataMonitoring(variables=[cost], prefix="train", after_epoch=True)
+    test_monitor = DataStreamMonitoring(variables=[cost], data_stream=stream_test, prefix='test')
+    train_monitor = TrainingDataMonitoring(variables=[cost], prefix='train', after_epoch=True)
 
     if BOKEH_AVAILABLE:
         plot = Plot(execution_name, channels=[['train_cost', 'test_cost']])
