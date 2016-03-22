@@ -7,7 +7,7 @@ from fuel.datasets.base import IndexableDataset
 from fuel.streams import DataStream
 from fuel.datasets import IndexableDataset
 from fuel.schemes import SequentialScheme
-from fuel.transformers import Transformer
+from fuel.transformers import Mapping
 
 from blocks.bricks import Linear
 from blocks.bricks.recurrent import LSTM
@@ -59,7 +59,7 @@ def load_data(data_path):
 
 def parse_pandas_to_fuel(data_pandas):
 
-    features = data_pandas.drop('CloseTarget', axis=1).values.astype(theano.config.floatX)
+    features = data_pandas.drop('CloseTarget', axis=1).values.astype(theano.config.floatX)[:, np.newaxis, :]
     targets = data_pandas['CloseTarget'].values.astype(theano.config.floatX)[:, np.newaxis]
 
     print("features {} targets {}".format(features.shape, targets.shape))
@@ -67,16 +67,11 @@ def parse_pandas_to_fuel(data_pandas):
     return IndexableDataset(indexables=OrderedDict([('x', features), ('y', targets)]),
                             axis_labels=OrderedDict([('x',
                                                      tuple(data_pandas.drop('CloseTarget', axis=1).columns)),
-                                                    ('y', tuple('CloseTarget'))]))
+                                                    ('y', tuple(['CloseTarget']))]))
 
 
-class SwappingTransformer(Transformer):
-
-    def transform_example(self, example):
-        return example
-
-    def transform_batch(self, batch):
-        return batch
+def swap_axes_batch(batch):
+    return batch[0].transpose(1, 0, 2), batch[1][np.newaxis, :]
 
 
 def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
@@ -96,15 +91,17 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     stream_train = DataStream(dataset=dataset_train,
                               iteration_scheme=SequentialScheme(examples=dataset_train.num_examples,
                                                                 batch_size=batch_size))
-    stream_train = SwappingTransformer(stream_train, produces_examples=False)
+
+    stream_train = Mapping(stream_train, swap_axes_batch)  # lambda v: (v[0].transpose(1, 0, 2), v[1][np.newaxis, :]))
 
     stream_test = DataStream(dataset=dataset_test,
                              iteration_scheme=SequentialScheme(examples=dataset_test.num_examples,
                                                                batch_size=batch_size))
-    stream_test = SwappingTransformer(stream_test, produces_examples=False)
+    stream_test = Mapping(stream_test, swap_axes_batch)
 
-    x = T.matrix('x')
-    y = T.matrix('y')
+    x = T.tensor3('x')
+    # x = x.dimshuffle(1, 0, 2)
+    y = T.tensor3('y')
 
     # we need to provide data for the LSTM layer of size 4 * lstm_dim, see
     # LSTM layer documentation for the explanation
@@ -128,13 +125,14 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     h_to_o.initialize()
 
     # start of testing
-    f = theano.function([x], y_hat)
-
-    for data in stream_test.get_epoch_iterator():
-        y_test = f(data[0])
-        print("y_test {}".format(y_test))
-        print("y shape {}".format(y_test.shape))
-        return
+    # f = theano.function([x], y_hat)
+    #
+    # for data in stream_test.get_epoch_iterator():
+    #     print('x shape: {} , y shape: {}'.format(data[0].shape, data[1].shape))
+    #     y_test = f(data[0])
+    #     print("y_test {}".format(y_test))
+    #     print("y shape {}".format(y_test.shape))
+    #     return
     # end of testing
 
     cost = SquaredError().apply(y, y_hat)
@@ -154,5 +152,7 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
                                      FinishAfter(after_n_epochs=num_epochs),
                                      Printing(), ProgressBar(), Checkpoint(save_file), plot])
     main_loop.run()
+
+    print('If you reached here, you have a trained LSTM :)')
 
     return main_loop
