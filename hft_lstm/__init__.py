@@ -1,13 +1,5 @@
 from __future__ import print_function
 
-import theano
-import theano.tensor as T
-from fuel.datasets.base import IndexableDataset
-
-from fuel.streams import DataStream
-from fuel.datasets import IndexableDataset
-from fuel.schemes import SequentialScheme
-from fuel.transformers import Mapping
 
 from blocks.bricks import Linear
 from blocks.bricks.recurrent import LSTM
@@ -22,65 +14,16 @@ from blocks.extensions.monitoring import (DataStreamMonitoring,
 from blocks.main_loop import MainLoop
 from blocks.model import Model
 
-import pandas
-from collections import OrderedDict
+import theano.tensor as T
 import numpy as np
-
 import pdb
+from converters import BatchStreamConverter
 
 try:
     from blocks_extras.extensions.plot import Plot
     BOKEH_AVAILABLE = True
 except ImportError:
     BOKEH_AVAILABLE = False
-
-
-def load_data(data_path):
-    """
-    :param data_path: Path to data
-    :return: two DataStreams, the first is the train and the other is the test
-    """
-    data = pandas.read_csv(data_path + 'dados_petr.csv', sep=';')
-    data['Date'] = pandas.to_datetime(data.Date, dayfirst=True)
-    data.sort_values('Date', inplace=True)
-
-    # Create the target column, that is the Close value from the next row
-    data['CloseTarget'] = pandas.DataFrame(data.Close).drop(0).reset_index(drop=True)
-
-    # Remove the row as it there is no target to point (CloseTarget will be NaN)
-    data.drop(len(data) - 1, inplace=True)
-
-    # separate train data from test data and delete column Date (no longer needed)
-    loaded_train = data[data.Date.map(lambda x: x.month != 10)].copy().drop(['Date'], axis=1)
-    loaded_test = data[data.Date.map(lambda x: x.month == 10)].copy().drop(['Date'], axis=1).reset_index(drop=True)
-
-    return {'train': loaded_train, 'test': loaded_test}
-
-
-def pandas_to_batch_stream(data_pandas, batch_size):
-
-    features = data_pandas.drop('CloseTarget', axis=1).values.astype(theano.config.floatX)[:, np.newaxis, :]
-    targets = data_pandas['CloseTarget'].values.astype(theano.config.floatX)[:, np.newaxis]
-
-    print("features {} targets {}".format(features.shape, targets.shape))
-
-    dataset = IndexableDataset(indexables=OrderedDict([('x', features), ('y', targets)]),
-                               axis_labels=OrderedDict([('x',
-                                                        tuple(data_pandas.drop('CloseTarget', axis=1).columns)),
-                                                        ('y', tuple(['CloseTarget']))]))
-
-    stream = DataStream(dataset=dataset,
-                        iteration_scheme=SequentialScheme(examples=dataset.num_examples,
-                                                          batch_size=batch_size))
-
-    stream = Mapping(stream, swap_axes_batch)
-
-    return stream
-
-
-def swap_axes_batch(batch):
-    # print('BATCH x shape {} y shape {}'.format(batch[0].shape, batch[1].shape))
-    return batch[0].transpose(1, 0, 2), batch[1][np.newaxis, :]
 
 
 def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
@@ -92,10 +35,10 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
 
     save_file = save_path + execution_name
 
-    d = load_data(data_path)
+    converter = BatchStreamConverter(data_path + 'dados_petr.csv')
+    converter.load()
 
-    stream_train = pandas_to_batch_stream(d['train'], batch_size)
-    stream_test = pandas_to_batch_stream(d['train'], batch_size)
+    stream_train, stream_test = converter.get_streams(batch_size)
 
     x = T.tensor3('x')
     y = T.tensor3('y')
