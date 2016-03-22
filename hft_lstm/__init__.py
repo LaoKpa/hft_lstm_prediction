@@ -57,20 +57,29 @@ def load_data(data_path):
     return {'train': loaded_train, 'test': loaded_test}
 
 
-def parse_pandas_to_fuel(data_pandas):
+def pandas_to_batch_stream(data_pandas, batch_size):
 
     features = data_pandas.drop('CloseTarget', axis=1).values.astype(theano.config.floatX)[:, np.newaxis, :]
     targets = data_pandas['CloseTarget'].values.astype(theano.config.floatX)[:, np.newaxis]
 
     print("features {} targets {}".format(features.shape, targets.shape))
 
-    return IndexableDataset(indexables=OrderedDict([('x', features), ('y', targets)]),
-                            axis_labels=OrderedDict([('x',
-                                                     tuple(data_pandas.drop('CloseTarget', axis=1).columns)),
-                                                    ('y', tuple(['CloseTarget']))]))
+    dataset = IndexableDataset(indexables=OrderedDict([('x', features), ('y', targets)]),
+                               axis_labels=OrderedDict([('x',
+                                                        tuple(data_pandas.drop('CloseTarget', axis=1).columns)),
+                                                        ('y', tuple(['CloseTarget']))]))
+
+    stream = DataStream(dataset=dataset,
+                        iteration_scheme=SequentialScheme(examples=dataset.num_examples,
+                                                          batch_size=batch_size))
+
+    stream = Mapping(stream, swap_axes_batch)
+
+    return stream
 
 
 def swap_axes_batch(batch):
+    # print('BATCH x shape {} y shape {}'.format(batch[0].shape, batch[1].shape))
     return batch[0].transpose(1, 0, 2), batch[1][np.newaxis, :]
 
 
@@ -85,22 +94,10 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
 
     d = load_data(data_path)
 
-    dataset_train = parse_pandas_to_fuel(d['train'])
-    dataset_test = parse_pandas_to_fuel(d['test'])
-
-    stream_train = DataStream(dataset=dataset_train,
-                              iteration_scheme=SequentialScheme(examples=dataset_train.num_examples,
-                                                                batch_size=batch_size))
-
-    stream_train = Mapping(stream_train, swap_axes_batch)  # lambda v: (v[0].transpose(1, 0, 2), v[1][np.newaxis, :]))
-
-    stream_test = DataStream(dataset=dataset_test,
-                             iteration_scheme=SequentialScheme(examples=dataset_test.num_examples,
-                                                               batch_size=batch_size))
-    stream_test = Mapping(stream_test, swap_axes_batch)
+    stream_train = pandas_to_batch_stream(d['train'], batch_size)
+    stream_test = pandas_to_batch_stream(d['train'], batch_size)
 
     x = T.tensor3('x')
-    # x = x.dimshuffle(1, 0, 2)
     y = T.tensor3('y')
 
     # we need to provide data for the LSTM layer of size 4 * lstm_dim, see
