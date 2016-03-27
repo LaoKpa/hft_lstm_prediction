@@ -47,21 +47,14 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     x = T.tensor3('x')
     y = T.tensor3('y')
 
-    linear_lstm = LinearLSTM(6, 1, lstm_dim)
+    # input_dim = 6
+    # output_dim = 1
+    linear_lstm = LinearLSTM(len(converter.get_dimensions()), 1, lstm_dim,
+                             print_intermediate=True,
+                             print_attrs=['shape'])
 
     y_hat = linear_lstm.apply(x)
     linear_lstm.initialize()
-
-    # start of testing
-    # f = theano.function([x], y_hat)
-
-    # for data in stream_test.get_epoch_iterator():
-    #     print('x shape: {} , y shape: {}'.format(data[0].shape, data[1].shape))
-    #     # y_test = f(data[0])
-    #     # print("y_test {}".format(y_test))
-    #     # print("y shape {}".format(y_test.shape))
-    #     return
-    # end of testing
 
     c = AbsolutePercentageError().apply(y, y_hat)
     c.name = 'cost'
