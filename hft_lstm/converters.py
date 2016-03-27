@@ -50,7 +50,7 @@ class PandasStreamsConverter(object):
                data_pandas['CloseTarget'].values.astype(theano.config.floatX)
 
     def get_axis_labels(self):
-        return OrderedDict([('x',tuple(self.get_dimensions())), ('y', tuple(['CloseTarget']))])
+        return OrderedDict([('x', tuple(self.get_dimensions())), ('y', tuple(['CloseTarget']))])
 
     def get_dimensions(self):
         """
@@ -92,8 +92,8 @@ class BatchStreamConverter(PandasStreamsConverter):
         stream = DataStream(dataset=dataset,
                             iteration_scheme=SequentialScheme(examples=dataset.num_examples,
                                                               batch_size=batch_size))
-        # Changes batch from (Batch Size, Sequence Length, Dimensions) to (Sequence Length, Batch Size, Dimensions)
-        # needed for blocks recurrent structures
+        # Changes batch from (Mini Batch Size, Sequence Length, Dimensions)
+        # to (Sequence Length, Mini Batch Size, Dimensions) needed for blocks recurrent structures
         stream = Mapping(stream, swap_axes_batch)
 
         return stream
@@ -104,8 +104,8 @@ class IterStreamConverter(PandasStreamsConverter):
     def _parse_to_stream(self, batch_size, features, targets):
 
         # Create new axes, later needed due to recurrent nets' blocks architecture
-        features = features[:, np.newaxis, :]
-        targets = targets[:, np.newaxis]
+        features = features[np.newaxis, :, :]
+        targets = targets[np.newaxis, :, np.newaxis]
 
         print("features {} targets {}".format(features.shape, targets.shape))
 
@@ -113,5 +113,16 @@ class IterStreamConverter(PandasStreamsConverter):
                                   axis_labels=self.get_axis_labels())
 
         stream = DataStream(dataset=dataset)
-
+        # stream = Mapping(stream, add_axes)
+        stream = Mapping(stream, swap_axes)
         return stream
+
+
+def add_axes(batch):
+    return batch[0][np.newaxis, :], batch[1][np.newaxis, :]
+
+
+def swap_axes(batch):
+    # print('BATCH x shape {} y shape {}'.format(batch[0].shape, batch[1].shape))
+    return batch[0][np.newaxis, :].transpose(1, 0, 2), batch[1][np.newaxis, :].transpose(1, 0, 2)
+
