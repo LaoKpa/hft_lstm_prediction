@@ -5,6 +5,7 @@ from blocks.initialization import Constant, IsotropicGaussian
 
 from theano.printing import Print
 
+
 class LinearLSTM(Initializable):
 
     def __init__(self, input_dim, output_dim, lstm_dim, print_intermediate=False, print_attrs=['__str__'], **kwargs):
@@ -39,7 +40,7 @@ class LinearLSTM(Initializable):
         y_hat = self.h_to_o.apply(h)
         y_hat.name = 'y_hat'
         if self.print_intermediate:
-            y_hat = Print(message="hidden states info", attrs=self.print_attrs)(y_hat)
+            y_hat = Print(message="y_hat info", attrs=self.print_attrs)(y_hat)
 
         return y_hat
 

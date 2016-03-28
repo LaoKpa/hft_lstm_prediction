@@ -42,6 +42,8 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     converter = converters.IterStreamConverter(data_path + 'dados_petr.csv')
     converter.load()
 
+    # The train stream will return (TimeSequence, BatchSize, Dimensions) for
+    # and the train test will return (TimeSequence, BatchSize, 1)
     stream_train, stream_test = converter.get_streams(batch_size)
 
     x = T.tensor3('x')

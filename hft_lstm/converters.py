@@ -123,6 +123,7 @@ def add_axes(batch):
 
 
 def swap_axes(batch):
-    # print('BATCH x shape {} y shape {}'.format(batch[0].shape, batch[1].shape))
-    return batch[0][np.newaxis, :].transpose(1, 0, 2), batch[1][np.newaxis, :].transpose(1, 0, 2)
+    output = batch[0][np.newaxis, :].transpose(1, 0, 2), batch[1][np.newaxis, :].transpose(1, 0, 2)
+    # print('BATCH x shape {} y shape {}'.format(output[0].shape, output[1].shape))
+    return output
 
