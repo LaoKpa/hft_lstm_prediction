@@ -15,18 +15,14 @@ from fuel.schemes import SequentialScheme
 from fuel.transformers import Mapping
 
 
-def swap_axes_batch(batch):
-    # print('BATCH x shape {} y shape {}'.format(batch[0].shape, batch[1].shape))
-    return batch[0].transpose(1, 0, 2), batch[1][np.newaxis, :]
-
-
 @add_metaclass(ABCMeta)
 class PandasStreamsConverter(object):
 
-    def __init__(self, filepath):
+    def __init__(self, filepath, batch_size=None):
         self.filepath = filepath
         self.loaded_train = None
         self.loaded_test = None
+        self.batch_size = batch_size
 
     def load(self):
         data = pandas.read_csv(self.filepath, sep=';')
@@ -59,15 +55,15 @@ class PandasStreamsConverter(object):
         """
         return list(self.loaded_train.drop('CloseTarget', axis=1).columns)
 
-    def get_streams(self, batch_size):
+    def get_streams(self):
 
-        train = self._parse_to_stream(batch_size, *PandasStreamsConverter._to_numpy(self.loaded_train))
-        test = self._parse_to_stream(batch_size, *PandasStreamsConverter._to_numpy(self.loaded_test))
+        train = self._parse_to_stream(*PandasStreamsConverter._to_numpy(self.loaded_train))
+        test = self._parse_to_stream(*PandasStreamsConverter._to_numpy(self.loaded_test))
 
         return train, test
 
     @abstractmethod
-    def _parse_to_stream(self, batch_size, features, targets):
+    def _parse_to_stream(self, features, targets):
         """
         :param features: numpy.array representing the features of the dataset
         :param targets: numpy.array representing the features of the dataset
@@ -75,9 +71,23 @@ class PandasStreamsConverter(object):
         """
 
 
+def swap_axes_batch(batch):
+    output = batch[0].transpose(1, 0, 2), batch[1][np.newaxis, :]
+    # print('BATCH x shape {} y shape {}'.format(output[0].shape, output[1].shape))
+    return output
+
+
 class BatchStreamConverter(PandasStreamsConverter):
 
-    def _parse_to_stream(self, batch_size, features, targets):
+    def __init__(self, **kwargs):
+        if not kwargs.get('batch_size'):
+            raise ValueError('For batch stream, batch size is mandatory')
+        super(BatchStreamConverter, self).__init__(**kwargs)
+
+    def get_iteration_scheme(self, dataset):
+        return SequentialScheme(examples=dataset.num_examples, batch_size=self.batch_size)
+
+    def _parse_to_stream(self, features, targets):
 
         # Create new axes, later needed due to recurrent nets' blocks architecture
         # (Batch Size, Sequence Length, Dimensions)
@@ -90,8 +100,7 @@ class BatchStreamConverter(PandasStreamsConverter):
                                    axis_labels=self.get_axis_labels())
 
         stream = DataStream(dataset=dataset,
-                            iteration_scheme=SequentialScheme(examples=dataset.num_examples,
-                                                              batch_size=batch_size))
+                            iteration_scheme=self.get_iteration_scheme(dataset))
         # Changes batch from (Mini Batch Size, Sequence Length, Dimensions)
         # to (Sequence Length, Mini Batch Size, Dimensions) needed for blocks recurrent structures
         stream = Mapping(stream, swap_axes_batch)
@@ -101,7 +110,7 @@ class BatchStreamConverter(PandasStreamsConverter):
 
 class IterStreamConverter(PandasStreamsConverter):
 
-    def _parse_to_stream(self, batch_size, features, targets):
+    def _parse_to_stream(self, features, targets):
 
         # Create new axes, later needed due to recurrent nets' blocks architecture
         features = features[np.newaxis, :, :]

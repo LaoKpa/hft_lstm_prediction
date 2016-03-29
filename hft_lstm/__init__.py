@@ -38,13 +38,13 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
 
     save_file = save_path + execution_name
 
-    # converter = converters.BatchStreamConverter(data_path + 'dados_petr.csv')
+    # converter = converters.BatchStreamConverter(data_path + 'dados_petr.csv', batch_size=batch_size)
     converter = converters.IterStreamConverter(data_path + 'dados_petr.csv')
     converter.load()
 
     # The train stream will return (TimeSequence, BatchSize, Dimensions) for
     # and the train test will return (TimeSequence, BatchSize, 1)
-    stream_train, stream_test = converter.get_streams(batch_size)
+    stream_train, stream_test = converter.get_streams()
 
     x = T.tensor3('x')
     y = T.tensor3('y')
@@ -52,8 +52,8 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     # input_dim = 6
     # output_dim = 1
     linear_lstm = LinearLSTM(len(converter.get_dimensions()), 1, lstm_dim,
-                             print_intermediate=True,
-                             print_attrs=['shape'])
+                             # print_intermediate=True,
+                             print_attrs=['__str__', 'shape'])
 
     y_hat = linear_lstm.apply(x)
     linear_lstm.initialize()
