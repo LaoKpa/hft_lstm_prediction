@@ -24,10 +24,15 @@ class PandasStreamsConverter(object):
         self.loaded_test = None
         self.batch_size = batch_size
 
+    def normalize(self, data):
+        return (data - data.mean()) / (data.max() - data.min())
+
     def load(self):
         data = pandas.read_csv(self.filepath, sep=';')
         data['Date'] = pandas.to_datetime(data.Date, dayfirst=True)
         data.sort_values('Date', inplace=True)
+
+        data[data.columns[1:]] = self.normalize(data[data.columns[1:]])
 
         # Create the target column, that is the Close value from the next row
         data['CloseTarget'] = pandas.DataFrame(data.Close).drop(0).reset_index(drop=True)
@@ -122,17 +127,28 @@ class IterStreamConverter(PandasStreamsConverter):
                                   axis_labels=self.get_axis_labels())
 
         stream = DataStream(dataset=dataset)
-        # stream = Mapping(stream, add_axes)
-        stream = Mapping(stream, swap_axes)
+        stream = Mapping(stream, add_axes)
+        # stream = Mapping(stream, swap_axes)
         return stream
 
 
 def add_axes(batch):
-    return batch[0][np.newaxis, :], batch[1][np.newaxis, :]
+    first = batch[0][np.newaxis, :]
+    # print('first \n {} \n first reshaped \n {}'.format(first, first.reshape(first.shape[1], first.shape[0], first.shape[2])))
+    last = batch[1][np.newaxis, :]
+    output = first, last
+    print('BATCH x shape {} y shape {}'.format(output[0].shape, output[1].shape))
+    return output
 
 
 def swap_axes(batch):
-    output = batch[0][np.newaxis, :].transpose(1, 0, 2), batch[1][np.newaxis, :].transpose(1, 0, 2)
-    # print('BATCH x shape {} y shape {}'.format(output[0].shape, output[1].shape))
+    first = batch[0][np.newaxis, :]
+
+    # print('first \n {} \n first reshaped \n {}'.format(first, first.reshape(first.shape[1], first.shape[0], first.shape[2])))
+
+    last = batch[1][np.newaxis, :]
+    output = first.reshape(first.shape[1], first.shape[0], first.shape[2]), \
+             last.reshape(last.shape[1], last.shape[0], last.shape[2])
+    print('BATCH x shape {} y shape {}'.format(output[0].shape, output[1].shape))
     return output
 

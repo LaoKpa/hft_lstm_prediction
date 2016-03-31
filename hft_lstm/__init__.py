@@ -12,6 +12,9 @@ from blocks.extensions.monitoring import (DataStreamMonitoring,
                                           TrainingDataMonitoring)
 from blocks.main_loop import MainLoop
 from blocks.model import Model
+from blocks.bricks.sequence_generators import SequenceGenerator, Readout
+
+from itertools import ifilter
 
 import theano
 import theano.tensor as T
@@ -28,6 +31,9 @@ try:
 except ImportError:
     BOKEH_AVAILABLE = False
 
+
+def find_theano_var_in_list(name, list_to_search):
+    return list(ifilter(lambda l: l.name == name, list_to_search))[0]
 
 def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     # The file that contains the model saved is a concatenation of information passed
@@ -49,6 +55,8 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     x = T.tensor3('x')
     y = T.tensor3('y')
 
+    y = y.reshape((y.shape[1], y.shape[0], y.shape[2]))
+
     # input_dim = 6
     # output_dim = 1
     linear_lstm = LinearLSTM(len(converter.get_dimensions()), 1, lstm_dim,
@@ -62,6 +70,10 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     c.name = 'cost'
 
     cg = ComputationGraph(c)
+
+    print(cg.parameters)
+
+    W_state = find_theano_var_in_list('W_state', cg.parameters)
 
     algorithm = GradientDescent(cost=c, parameters=cg.parameters, step_rule=Adam())
     test_monitor = DataStreamMonitoring(variables=[c], data_stream=stream_test, prefix='test')

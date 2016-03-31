@@ -28,7 +28,8 @@ class LinearLSTM(Initializable):
 
     @application
     def apply(self, source):
-        x_linear = self.x_to_h.apply(source)
+
+        x_linear = self.x_to_h.apply(source.reshape((source.shape[1], source.shape[0], source.shape[2])))
         x_linear.name = 'x_linear'
         if self.print_intermediate:
             x_linear = Print(message='x_linear info', attrs=self.print_attrs)(x_linear)
