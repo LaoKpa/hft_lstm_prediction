@@ -1,154 +1,136 @@
-from abc import ABCMeta
 
-import pandas
-import theano
 import numpy as np
+import pandas as pd
+
+from fuel.streams import DataStream
+from fuel.datasets import IndexableDataset
+from fuel.schemes import IterationScheme
+from fuel.streams import DataStream
+from fuel.transformers import Cast, Mapping
 
 from six import add_metaclass
 from abc import ABCMeta, abstractmethod
 
 from collections import OrderedDict
 
-from fuel.streams import DataStream
-from fuel.datasets import IndexableDataset, IterableDataset
-from fuel.schemes import SequentialScheme
-from fuel.transformers import Mapping
+import theano
+
+# copied and adapted from 
+# https://scipher.wordpress.com/2010/12/02/simple-sliding-window-iterator-in-python/
+class SlidingWindow(object):
+    """Returns iterator that will emit chunks of size 'winSize' each time self.next()
+    is called."""
+    def __init__(self, sequence, winSize, step=1):
+        """Returns iterator that will emit chunks of size 'winSize' and 'step' forward in
+        the seq each time self.next() is called."""
+ 
+        # verification code
+        if not isinstance(winSize, int) and isinstance(step, int):
+            raise Exception("**ERROR** type(winSize) and type(step) must be int.")
+        if step > winSize:
+            raise Exception("**ERROR** step must not be larger than winSize.")
+        if winSize > len(sequence):
+            raise Exception("**ERROR** winSize must not be larger than sequence length.")
+        self._seq = sequence
+        self._step = step
+        self._start = 0
+        self._stop = winSize
+ 
+    def __iter__(self):
+        return self
+ 
+    def next(self):
+        """Returns next window chunk or ends iteration if the sequence has ended."""
+        try:
+            assert self._stop <= len(self._seq), "Not True!"
+            chunk = self._seq[self._start:self._stop]
+            self._start += self._step
+            self._stop  += self._step
+            return chunk
+        except AssertionError:
+            raise StopIteration
 
 
 @add_metaclass(ABCMeta)
-class PandasStreamsConverter(object):
+class WindowScheme(IterationScheme):
+    requests_examples = False
 
-    def __init__(self, filepath, batch_size=None):
-        self.filepath = filepath
-        self.loaded_train = None
-        self.loaded_test = None
-        self.batch_size = batch_size
+    def __init__(self, dataset, **kwargs):
+        self.dataset = dataset
+        super(IterationScheme, self).__init__(**kwargs)
 
-    def normalize(self, data):
-        return (data - data.mean()) / (data.max() - data.min())
+    def get_request_iterator(self):
+        grouped = self.dataset.groupby(pd.Grouper(key="Date", freq="1B"))
+        l = sorted(grouped.indices.items(), key=lambda x: x[0])
+        l = [x for t, x in l if len(x) > 0]
 
-    def load(self):
-        data = pandas.read_csv(self.filepath, sep=';')
-        data['Date'] = pandas.to_datetime(data.Date, dayfirst=True)
-        data.sort_values('Date', inplace=True)
-
-        data[data.columns[1:]] = self.normalize(data[data.columns[1:]])
-
-        # Create the target column, that is the Close value from the next row
-        data['CloseTarget'] = pandas.DataFrame(data.Close).drop(0).reset_index(drop=True)
-
-        # Remove the row as it there is no target to point (CloseTarget will be NaN)
-        data.drop(len(data) - 1, inplace=True)
-
-        # separate train data from test data and delete column Date (no longer needed)
-        self.loaded_train = data[data.Date.map(lambda x: x.month != 10)].copy().drop(['Date'], axis=1)
-        self.loaded_test = data[data.Date.map(lambda x: x.month == 10)].copy().drop(['Date'],
-                                                                                    axis=1).reset_index(drop=True)
-
-    @staticmethod
-    def _to_numpy(data_pandas):
-        return data_pandas.drop('CloseTarget', axis=1).values.astype(theano.config.floatX), \
-               data_pandas['CloseTarget'].values.astype(theano.config.floatX)
-
-    def get_axis_labels(self):
-        return OrderedDict([('x', tuple(self.get_dimensions())), ('y', tuple(['CloseTarget']))])
-
-    def get_dimensions(self):
-        """
-
-        :return: list of dimensions' names
-        """
-        return list(self.loaded_train.drop('CloseTarget', axis=1).columns)
-
-    def get_streams(self):
-
-        train = self._parse_to_stream(*PandasStreamsConverter._to_numpy(self.loaded_train))
-        test = self._parse_to_stream(*PandasStreamsConverter._to_numpy(self.loaded_test))
-
-        return train, test
+        for l in SlidingWindow(l, 4):
+            yield self.window_filter(l)
 
     @abstractmethod
-    def _parse_to_stream(self, features, targets):
-        """
-        :param features: numpy.array representing the features of the dataset
-        :param targets: numpy.array representing the features of the dataset
-        :return: blocks.stream.DataStream
-        """
+    def window_filter(self, l):
+        pass
 
 
-def swap_axes_batch(batch):
-    output = batch[0].transpose(1, 0, 2), batch[1][np.newaxis, :]
-    # print('BATCH x shape {} y shape {}'.format(output[0].shape, output[1].shape))
-    return output
+class TrainWindowScheme(WindowScheme):
+    def window_filter(self, l):
+        return l[0] + l[1] + l[2]
 
 
-class BatchStreamConverter(PandasStreamsConverter):
-
-    def __init__(self, **kwargs):
-        if not kwargs.get('batch_size'):
-            raise ValueError('For batch stream, batch size is mandatory')
-        super(BatchStreamConverter, self).__init__(**kwargs)
-
-    def get_iteration_scheme(self, dataset):
-        return SequentialScheme(examples=dataset.num_examples, batch_size=self.batch_size)
-
-    def _parse_to_stream(self, features, targets):
-
-        # Create new axes, later needed due to recurrent nets' blocks architecture
-        # (Batch Size, Sequence Length, Dimensions)
-        features = features[:, np.newaxis, :]
-        targets = targets[:, np.newaxis]
-
-        print("features {} targets {}".format(features.shape, targets.shape))
-
-        dataset = IndexableDataset(indexables=OrderedDict([('x', features), ('y', targets)]),
-                                   axis_labels=self.get_axis_labels())
-
-        stream = DataStream(dataset=dataset,
-                            iteration_scheme=self.get_iteration_scheme(dataset))
-        # Changes batch from (Mini Batch Size, Sequence Length, Dimensions)
-        # to (Sequence Length, Mini Batch Size, Dimensions) needed for blocks recurrent structures
-        stream = Mapping(stream, swap_axes_batch)
-
-        return stream
+class TestWindowScheme(WindowScheme):
+    def window_filter(self, l):
+        return l[3]
 
 
-class IterStreamConverter(PandasStreamsConverter):
+class StreamGenerator(object):
 
-    def _parse_to_stream(self, features, targets):
+    def __init__(self, data_path):
+        self.data_path = data_path
+        self.pd_data = None
+        self.dataset = None
 
-        # Create new axes, later needed due to recurrent nets' blocks architecture
-        features = features[np.newaxis, :, :]
-        targets = targets[np.newaxis, :, np.newaxis]
+    def load(self):
+        data = pd.read_csv(self.data_path, sep=";")
+        data['Date'] = pd.to_datetime(data.Date, dayfirst=True)
+        data.sort_values('Date')
 
-        print("features {} targets {}".format(features.shape, targets.shape))
+        def normalize(pdata):
+            return (pdata - pdata.mean()) / (pdata.max() - pdata.min())
 
-        dataset = IterableDataset(iterables=OrderedDict([('x', features), ('y', targets)]),
-                                  axis_labels=self.get_axis_labels())
+        # Except Date
+        data[data.columns[1:]] = normalize(data[data.columns[1:]])
 
-        stream = DataStream(dataset=dataset)
+        close_target = pd.DataFrame(data.Close).drop(0).reset_index(drop=True)
+        close_target.loc[len(close_target)] = data.Close[0]
+        data['CloseTarget'] = close_target
+
+        self.pd_data = data
+
+        columns = list(data.columns)[1:]
+        columns.remove('CloseTarget')
+
+        self.dataset = IndexableDataset(indexables=OrderedDict([('x', data[columns].values),
+                                                                ('y', data['CloseTarget'].values)]))
+
+    def get_streams(self):
+        stream_train = self.get_stream(TrainWindowScheme(self.pd_data))
+        stream_test = self.get_stream(TestWindowScheme(self.pd_data))
+
+        return stream_train, stream_test
+
+    def get_stream(self, scheme):
+        stream = DataStream(dataset=self.dataset,
+                            iteration_scheme=scheme)
+
         stream = Mapping(stream, add_axes)
-        # stream = Mapping(stream, swap_axes)
+        stream = Cast(stream, theano.config.floatX)
         return stream
 
 
+# global to pickle
 def add_axes(batch):
     first = batch[0][np.newaxis, :]
-    # print('first \n {} \n first reshaped \n {}'.format(first, first.reshape(first.shape[1], first.shape[0], first.shape[2])))
-    last = batch[1][np.newaxis, :]
+    last = batch[1][np.newaxis, :, np.newaxis]
     output = first, last
-    print('BATCH x shape {} y shape {}'.format(output[0].shape, output[1].shape))
-    return output
-
-
-def swap_axes(batch):
-    first = batch[0][np.newaxis, :]
-
-    # print('first \n {} \n first reshaped \n {}'.format(first, first.reshape(first.shape[1], first.shape[0], first.shape[2])))
-
-    last = batch[1][np.newaxis, :]
-    output = first.reshape(first.shape[1], first.shape[0], first.shape[2]), \
-             last.reshape(last.shape[1], last.shape[0], last.shape[2])
-    print('BATCH x shape {} y shape {}'.format(output[0].shape, output[1].shape))
     return output
 
