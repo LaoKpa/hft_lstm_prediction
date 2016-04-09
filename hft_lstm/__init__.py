@@ -47,7 +47,9 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
 
     save_file = save_path + execution_name
 
-    converter = converters.StreamGenerator(data_path + 'dados_petr.csv')
+    converter = converters.StreamGenerator(data_path + 'dados_petr.csv',
+                                           normalize=True,
+                                           normalize_target=False)
     converter.load()
 
     # The train stream will return (TimeSequence, BatchSize, Dimensions) for
@@ -68,8 +70,8 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     y_hat = linear_lstm.apply(x)
     linear_lstm.initialize()
 
-    # c = AbsolutePercentageError().apply(y, y_hat)
-    c = SquaredError().apply(y, y_hat)
+    c = AbsolutePercentageError().apply(y, y_hat)
+    # c = SquaredError().apply(y, y_hat)
     c.name = 'cost'
 
     cg = ComputationGraph(c)
@@ -90,6 +92,8 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     main_loop = MainLoop(algorithm, stream_train, model=Model(c),
                          extensions=extensions)
     main_loop.run()
+
+
 
     print('If you reached here, you have a trained LSTM :)')
 
