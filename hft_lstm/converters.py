@@ -84,30 +84,43 @@ class TestWindowScheme(WindowScheme):
 
 class StreamGenerator(object):
 
-    def __init__(self, data_path):
+    def __init__(self, data_path, normalize=False, normalize_target=False):
         self.data_path = data_path
         self.pd_data = None
         self.dataset = None
+        self.normalize = normalize
+        self.normalize_target = normalize_target
 
     def load(self):
         data = pd.read_csv(self.data_path, sep=";")
         data['Date'] = pd.to_datetime(data.Date, dayfirst=True)
         data.sort_values('Date')
 
-        def normalize(pdata):
-            return (pdata - pdata.mean()) / (pdata.max() - pdata.min())
+        close_target = None
+        if self.normalize:
+            def normalize(pdata):
+                return (pdata - pdata.mean()) / (pdata.max() - pdata.min())
 
-        # Except Date
-        data[data.columns[1:]] = normalize(data[data.columns[1:]])
+            if self.normalize_target is False:
+                close_target = pd.DataFrame(data.Close).drop(0).reset_index(drop=True)
+                close_target.loc[len(close_target)] = data.Close[0]
+            # Except Date
+            data[data.columns[1:]] = normalize(data[data.columns[1:]])
 
-        close_target = pd.DataFrame(data.Close).drop(0).reset_index(drop=True)
-        close_target.loc[len(close_target)] = data.Close[0]
+        # normalize the target is activated
+        if close_target is None:
+            close_target = pd.DataFrame(data.Close).drop(0).reset_index(drop=True)
+            close_target.loc[len(close_target)] = data.Close[0]
+
         data['CloseTarget'] = close_target
 
         self.pd_data = data
 
         columns = list(data.columns)[1:]
         columns.remove('CloseTarget')
+
+        print('data loaded successfully')
+        print(data.first())
 
         self.dataset = IndexableDataset(indexables=OrderedDict([('x', data[columns].values),
                                                                 ('y', data['CloseTarget'].values)]))
