@@ -23,6 +23,10 @@ import theano.tensor as T
 import numpy as np
 import pdb
 
+import matplotlib.pyplot as plt
+
+import pandas as pd
+
 import converters
 from cost import AbsolutePercentageError
 from custom_bricks import LinearLSTM
@@ -38,6 +42,31 @@ def find_theano_var_in_list(name, list_to_search):
     return list(ifilter(lambda l: l.name == name, list_to_search))[0]
 
 
+def plot_test(x, y_hat, converter, execution_name):
+
+    predict = theano.function([x], y_hat)
+
+    stream_train, stream_test = converter.get_streams()
+    day_predict = list(stream_test.get_epoch_iterator())[0]
+    fig = plt.figure(figsize=(10, 10), dpi=100)
+    idxs = list(converter.get_test_scheme().get_request_iterator())[0]
+    day = converter.pd_data.iloc[idxs]
+
+    y = predict(day_predict[0])
+
+    y = y.reshape(y.shape[0])
+
+    if converter.scheme == 'window':
+        plt.plot(day['Time'], day['Close'] * converter.maxmin['Close'] + converter.mean['Close'], 'r',
+                 day['Time'], y, 'b')
+    else:
+        plt.plot(day['Date'], day['Close'] * converter.maxmin['Close'] + converter.mean['Close'], 'r',
+                 day['Date'], y, 'b')
+
+    fig.savefig(execution_name + '.png')
+    plt.close(fig)
+
+
 def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
     # The file that contains the model saved is a concatenation of information passed
     if save_path.endswith('//') is False:
@@ -49,7 +78,9 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
 
     converter = converters.StreamGenerator(data_path + 'dados_petr.csv',
                                            normalize=True,
-                                           normalize_target=False)
+                                           normalize_target=False,
+                                           scheme='sequential'
+                                           )
     converter.load()
 
     # The train stream will return (TimeSequence, BatchSize, Dimensions) for
@@ -93,7 +124,7 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
                          extensions=extensions)
     main_loop.run()
 
-
+    plot_test(x, y_hat, converter, save_file)
 
     print('If you reached here, you have a trained LSTM :)')
 
