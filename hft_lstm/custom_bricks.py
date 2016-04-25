@@ -48,3 +48,7 @@ class LinearLSTM(Initializable):
     def initialize(self):
         for child in self.children:
             child.initialize()
+
+    def reset_allocation(self):
+        for child in self.children:
+            child.allocated = False
