@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 
 import pandas as pd
 
-import converters
+from converters import SlidingWindowPandasIterator, build_stream
 from cost import AbsolutePercentageError
 from custom_bricks import LinearLSTM
 
@@ -76,56 +76,68 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
 
     save_file = save_path + execution_name
 
-    converter = converters.StreamGenerator(data_path + 'dados_petr.csv',
-                                           normalize=True,
-                                           normalize_target=False,
-                                           scheme='sequential'
-                                           )
-    converter.load()
+    sw_iterator = SlidingWindowPandasIterator(data_path=data_path + 'dados_petr.csv',
+                                              normalize=True,
+                                              normalize_target=False,
+                                              train_size=pd.Timedelta(days=21),
+                                              test_size=pd.Timedelta(days=7),
+                                              step_size=pd.Timedelta(days=7))
 
-    # The train stream will return (TimeSequence, BatchSize, Dimensions) for
-    # and the train test will return (TimeSequence, BatchSize, 1)
-    stream_train, stream_test = converter.get_streams()
+    avg_test_cost = 0
+    number_of_sets = 0
 
-    x = T.tensor3('x')
-    y = T.tensor3('y')
+    for train, test in sw_iterator:
 
-    y = y.reshape((y.shape[1], y.shape[0], y.shape[2]))
+        stream_train = build_stream(train)
+        stream_test = build_stream(test)
 
-    # input_dim = 6
-    # output_dim = 1
-    linear_lstm = LinearLSTM(6, 1, lstm_dim,
-                             # print_intermediate=True,
-                             print_attrs=['__str__', 'shape'])
+        # The train stream will return (TimeSequence, BatchSize, Dimensions) for
+        # and the train test will return (TimeSequence, BatchSize, 1)
 
-    y_hat = linear_lstm.apply(x)
-    linear_lstm.initialize()
+        x = T.tensor3('x')
+        y = T.tensor3('y')
 
-    c = AbsolutePercentageError().apply(y, y_hat)
-    # c = SquaredError().apply(y, y_hat)
-    c.name = 'cost'
+        y = y.reshape((y.shape[1], y.shape[0], y.shape[2]))
 
-    cg = ComputationGraph(c)
+        # input_dim = 6
+        # output_dim = 1
+        linear_lstm = LinearLSTM(6, 1, lstm_dim,
+                                 # print_intermediate=True,
+                                 print_attrs=['__str__', 'shape'])
 
-    algorithm = GradientDescent(cost=c, parameters=cg.parameters, step_rule=Adam())
+        y_hat = linear_lstm.apply(x)
+        linear_lstm.initialize()
 
-    extensions = [DataStreamMonitoring(variables=[c], data_stream=stream_test, prefix='test'),
-                  TrainingDataMonitoring(variables=[c], prefix='train', after_epoch=True),
-                  FinishAfter(after_n_epochs=num_epochs),
-                  Printing(),
-                  ProgressBar(),
-                  TrackTheBest('test_cost'),
-                  TrackTheBest('train_cost')]
+        c = AbsolutePercentageError().apply(y, y_hat)
+        # c = SquaredError().apply(y, y_hat)
+        c.name = 'cost'
 
-    if BOKEH_AVAILABLE:
-        extensions.append(Plot(execution_name, channels=[['train_cost', 'test_cost']]))
+        cg = ComputationGraph(c)
 
-    main_loop = MainLoop(algorithm, stream_train, model=Model(c),
-                         extensions=extensions)
-    main_loop.run()
+        extensions = [TrainingDataMonitoring(variables=[c], prefix='train', after_epoch=True),
+                      FinishAfter(after_n_epochs=num_epochs),
+                      Printing(),
+                      ProgressBar(),
+                      TrackTheBest('test_cost'),
+                      TrackTheBest('train_cost')]
 
-    plot_test(x, y_hat, converter, save_file)
+        if BOKEH_AVAILABLE:
+            extensions.append(Plot(execution_name, channels=[['train_cost', 'test_cost']]))
 
-    print('If you reached here, you have a trained LSTM :)')
+        algorithm = GradientDescent(cost=c, parameters=cg.parameters, step_rule=Adam())
+        extensions.insert(0, DataStreamMonitoring(variables=[c], data_stream=stream_test, prefix='test'))
+
+        main_loop = MainLoop(algorithm, stream_train, model=Model(c), extensions=extensions)
+        main_loop.run()
+
+        avg_test_cost += main_loop.log.status['best_test_cost']
+        number_of_sets += 1
+
+        if number_of_sets == 35:
+            break
+
+        # plot_test(x, y_hat, converter, save_file)
+
+    print("average test cost {}".format(avg_test_cost / float(number_of_sets)))
 
     return main_loop

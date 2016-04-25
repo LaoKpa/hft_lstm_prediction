@@ -83,31 +83,26 @@ class TestWindowScheme(WindowScheme):
         return l[3]
 
 
-class StreamGenerator(object):
+@add_metaclass(ABCMeta)
+class PandasDataIterator(object):
 
-    def __init__(self, data_path, normalize=False, normalize_target=False, scheme='window'):
-        self.data_path = data_path
-        self.pd_data = None
-        self.dataset = None
-        self.normalize = normalize
-        self.normalize_target = normalize_target
+    def __init__(self, data_path, normalize=False, normalize_target=False):
+
         self.mean = 0
         self.maxmin = 0
-        self.scheme = scheme
 
-    def load(self):
-        data = pd.read_csv(self.data_path, sep=";")
+        data = pd.read_csv(data_path, sep=";")
         data['Date'] = pd.to_datetime(data.Date, dayfirst=True)
         data.sort_values('Date')
 
         close_target = None
-        if self.normalize:
+        if normalize:
             def normalize(pdata):
                 mean = pdata.mean()
                 maxmin = pdata.max() - pdata.min()
                 return (pdata - mean) / maxmin, mean, maxmin
 
-            if self.normalize_target is False:
+            if normalize_target is False:
                 close_target = pd.DataFrame(data.Close).drop(0).reset_index(drop=True)
                 close_target.loc[len(close_target)] = data.Close[0]
             # Except Date
@@ -122,43 +117,67 @@ class StreamGenerator(object):
 
         data['Time'] = data['Date'].apply(lambda x: x.time())
 
-        self.pd_data = data
+        self.data = data
 
-        columns = ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
+        # Only used to stop the iteration
+        self.last_elem = data.iloc[-1]
 
-        print('data loaded successfully')
-        print(data.head())
+        # Variable responsible to iterate
+        self.start_train = pd.to_datetime('2014-01-01')
 
-        self.dataset = IndexableDataset(indexables=OrderedDict([('x', data[columns].values),
-                                                                ('y', data['CloseTarget'].values)]))
+    def __iter__(self):
+        return self
 
-    def get_streams(self):
-        stream_train = self.get_stream(self.get_train_scheme())
-        stream_test = self.get_stream(self.get_test_scheme())
+    @abstractmethod
+    def next(self):
+        pass
 
-        return stream_train, stream_test
 
-    def get_train_scheme(self):
-        if self.scheme == 'window':
-            return TrainWindowScheme(self.pd_data)
-        else:
-            return SequentialScheme(examples=range(5150), batch_size=5150)
+class SlidingWindowPandasIterator(PandasDataIterator):
 
-    def get_test_scheme(self):
-        if self.scheme == 'window':
-            return TestWindowScheme(self.pd_data)
-        else:
-            rng = range(5150, 5513)
-            return SequentialScheme(examples=rng, batch_size=len(rng))
+    def __init__(self, train_size, test_size, step_size, **kwargs):
+        super(SlidingWindowPandasIterator, self).__init__(**kwargs)
 
-    def get_stream(self, scheme):
-        stream = DataStream(dataset=self.dataset,
-                            iteration_scheme=scheme)
+        if not (isinstance(train_size, pd.Timedelta) and
+                isinstance(test_size, pd.Timedelta) and
+                isinstance(step_size, pd.Timedelta)):
+            raise ValueError("train_size and test_size must be pandas Timedelta type")
 
-        stream = Mapping(stream, add_axes)
-        stream = Cast(stream, theano.config.floatX)
-        return stream
+        self.train_size = train_size
+        self.test_size = test_size
+        self.step_size = step_size
 
+    def next(self):
+        end_train = self.start_train + self.train_size
+        start_test = end_train
+        end_test = start_test + self.test_size
+
+        train = self.data[(self.start_train <= self.data.Date) & (self.data.Date < end_train)]
+
+        test = self.data[(start_test <= self.data.Date) &
+                         (self.data.Date < end_test)]
+
+        self.start_train += self.step_size
+
+        # Time to stop?
+        if self.last_elem.Date <= test.iloc[-1].Date:
+            raise StopIteration()
+
+        return train, test
+
+
+def build_stream(data):
+    columns = ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
+    dataset = IndexableDataset(indexables=OrderedDict([('x', data[columns].values),
+                                                       ('y', data['CloseTarget'].values)]))
+    size = len(dataset.indexables[0])
+    stream = DataStream(dataset=dataset,
+                        iteration_scheme=SequentialScheme(examples=range(size), batch_size=size))
+
+    stream = Mapping(stream, add_axes)
+    stream = Cast(stream, theano.config.floatX)
+
+    return stream
 
 # global to pickle
 def add_axes(batch):
