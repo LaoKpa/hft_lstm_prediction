@@ -133,6 +133,7 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
         avg_test_cost += main_loop.log.status['best_test_cost']
         number_of_sets += 1
 
+        # due to dubious definition of the masters thesis
         if number_of_sets == 35:
             break
 
