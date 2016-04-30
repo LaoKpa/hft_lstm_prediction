@@ -122,7 +122,7 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
                       TrackTheBest('train_cost')]
 
         if BOKEH_AVAILABLE:
-            extensions.append(Plot(execution_name, channels=[['train_cost', 'test_cost']]))
+            extensions.append(Plot(execution_name + str(number_of_sets), channels=[['train_cost', 'test_cost']]))
 
         algorithm = GradientDescent(cost=c, parameters=cg.parameters, step_rule=Adam())
         extensions.insert(0, DataStreamMonitoring(variables=[c], data_stream=stream_test, prefix='test'))
