@@ -123,10 +123,15 @@ class PandasDataIterator(object):
         self.last_elem = data.iloc[-1]
 
         # Variable responsible to iterate
+        self.start_train_begin = pd.to_datetime('2014-01-01')
+
         self.start_train = pd.to_datetime('2014-01-01')
 
     def __iter__(self):
         return self
+
+    def reset(self):
+        self.start_train = self.start_train_begin
 
     @abstractmethod
     def next(self):
@@ -166,8 +171,9 @@ class SlidingWindowPandasIterator(PandasDataIterator):
         return train, test
 
 
-def build_stream(data):
-    columns = ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
+def build_stream(data, columns=None):
+    if columns is None:
+        columns = ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
     dataset = IndexableDataset(indexables=OrderedDict([('x', data[columns].values),
                                                        ('y', data['CloseTarget'].values)]))
     size = len(dataset.indexables[0])
@@ -178,6 +184,7 @@ def build_stream(data):
     stream = Cast(stream, theano.config.floatX)
 
     return stream
+
 
 # global to pickle
 def add_axes(batch):
