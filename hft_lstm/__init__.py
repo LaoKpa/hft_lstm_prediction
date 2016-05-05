@@ -83,23 +83,23 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
                                               test_size=pd.Timedelta(days=7),
                                               step_size=pd.Timedelta(days=7))
 
-    columns_list = [
-                    ['Close'],  # 1
-                    # ['Close', 'High', 'Low'],  # 2
-                    # ['Close', 'Open'],  # 3
-                    # ['Close', 'High', 'Low', 'Open'],  # 4
-                    # ['Close', 'Qty'],  # 5
-                    # ['Close', 'Open', 'Qty'],  # 6
-                    # ['Close', 'High', 'Low', 'Open', 'Qty'],  # 7
-                    # ['Close', 'Vol'],  # 8
-                    # ['Close', 'High', 'Low', 'Open', 'Vol'],  # 9
-                    # ['Close', 'Qty', 'Vol'],  # 10
-                    # ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
-                    ]  # 11
+    columns_dict = {
+                    1: ['Close'],  # 1
+                    # 2: ['Close', 'High', 'Low'],  # 2
+                    # 3: ['Close', 'Open'],  # 3
+                    # 4: ['Close', 'High', 'Low', 'Open'],  # 4
+                    # 5: ['Close', 'Qty'],  # 5
+                    # 6: ['Close', 'Open', 'Qty'],  # 6
+                    # 7: ['Close', 'High', 'Low', 'Open', 'Qty'],  # 7
+                    # 8: ['Close', 'Vol'],  # 8
+                    # 9: ['Close', 'High', 'Low', 'Open', 'Vol'],  # 9
+                    # 10: ['Close', 'Qty', 'Vol'],  # 10
+                    # 11: ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
+    }  # 11
 
     report_file.write('starting lstm training for data file {} \n'.format(datafile))
 
-    for columns in columns_list:
+    for key, columns in columns_dict.iteritems():
         report_file.write('\n*****************************************************************************\n')
         report_file.write('Training for the following columns {}'.format(columns))
 
@@ -110,7 +110,7 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
             avg_test_cost = 0
             number_of_sets = 0
 
-            execution_name = 'lstm_{}_{}_{}'.format(company, len(columns), dimension)
+            execution_name = 'lstm_{}_{}_{}'.format(company, key, dimension)
             save_file_pre = save_path + execution_name
 
             report_file.write('\n***********************************\n')
@@ -195,7 +195,7 @@ def train_lstm(train, test, input_dim, hidden_dimension, columns, epochs, save_f
                   # Printing(),
                   # ProgressBar(),
                   TrackTheBest('test_cost', choose_best=one_perc_min),
-                  FinishIfNoImprovementAfter('test_cost_best_so_far', epochs=500)]
+                  FinishIfNoImprovementAfter('test_cost_best_so_far', epochs=1000)]
 
     # Save only parameters, not the whole main loop and only when best_test_cost is updated
     checkpoint = Checkpoint(save_file, save_main_loop=False, after_training=False)
