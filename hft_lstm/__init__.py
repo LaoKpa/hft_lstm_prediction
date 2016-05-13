@@ -1,12 +1,17 @@
 from __future__ import print_function
 
+import logging
+from logging import CRITICAL
+
 from blocks.algorithms import GradientDescent, Adam
 from blocks.graph import ComputationGraph
+from blocks.model import Model
 from blocks.extensions import FinishAfter, Printing, ProgressBar
 from blocks.extensions.training import TrackTheBest
-from blocks.extensions.saveload import Checkpoint
+from blocks.extensions.saveload import Checkpoint, load_parameters
 from blocks.extensions.monitoring import (DataStreamMonitoring,
                                           TrainingDataMonitoring)
+from blocks.monitoring.evaluators import DatasetEvaluator
 from blocks.extensions.predicates import OnLogRecord
 from blocks.extensions.stopping import FinishIfNoImprovementAfter
 from blocks.main_loop import MainLoop
@@ -23,6 +28,7 @@ import pdb
 import matplotlib.pyplot as plt
 
 import pandas as pd
+from datetime import datetime
 
 from converters import SlidingWindowPandasIterator, build_stream
 from cost import AbsolutePercentageError
@@ -33,6 +39,8 @@ try:
     BOKEH_AVAILABLE = True
 except ImportError:
     BOKEH_AVAILABLE = False
+
+logging.disable(logging.CRITICAL)
 
 
 def find_theano_var_in_list(name, list_to_search):
@@ -64,7 +72,7 @@ def plot_test(x, y_hat, converter, execution_name):
     plt.close(fig)
 
 
-def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
+def main(save_path, data_path, lstm_dim, columns, num_epochs):
     # The file that contains the model saved is a concatenation of information passed
     if save_path.endswith('//') is False:
         save_path += '//'
@@ -85,17 +93,19 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
 
     columns_dict = {
                     1: ['Close'],  # 1
-                    # 2: ['Close', 'High', 'Low'],  # 2
-                    # 3: ['Close', 'Open'],  # 3
-                    # 4: ['Close', 'High', 'Low', 'Open'],  # 4
-                    # 5: ['Close', 'Qty'],  # 5
-                    # 6: ['Close', 'Open', 'Qty'],  # 6
-                    # 7: ['Close', 'High', 'Low', 'Open', 'Qty'],  # 7
-                    # 8: ['Close', 'Vol'],  # 8
-                    # 9: ['Close', 'High', 'Low', 'Open', 'Vol'],  # 9
-                    # 10: ['Close', 'Qty', 'Vol'],  # 10
-                    # 11: ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
+                    2: ['Close', 'High', 'Low'],  # 2
+                    3: ['Close', 'Open'],  # 3
+                    4: ['Close', 'High', 'Low', 'Open'],  # 4
+                    5: ['Close', 'Qty'],  # 5
+                    6: ['Close', 'Open', 'Qty'],  # 6
+                    7: ['Close', 'High', 'Low', 'Open', 'Qty'],  # 7
+                    8: ['Close', 'Vol'],  # 8
+                    9: ['Close', 'High', 'Low', 'Open', 'Vol'],  # 9
+                    10: ['Close', 'Qty', 'Vol'],  # 10
+                    11: ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
     }  # 11
+
+    columns_dict = {columns: columns_dict[columns]}
 
     report_file.write('starting lstm training for data file {} \n'.format(datafile))
 
@@ -122,18 +132,24 @@ def main(save_path, data_path, lstm_dim, batch_size, num_epochs):
 
             for train, test in sw_iterator:
 
+                start = datetime.now()
+                print('started at {}'.format(start))
+
                 number_of_sets += 1
+
                 best_test_cost, epochs_done = train_lstm(train, test, len(columns), dimension, columns, num_epochs,
                                                          save_file_pre + "_" + str(number_of_sets),
                                                          execution_name + "_" + str(number_of_sets))
 
-                report_file.write('set {}: best test cost {}, epochs done {} \n'.format(number_of_sets,
-                                                                                        best_test_cost,
-                                                                                        epochs_done))
+                report_file.write('set {}: \t best test cost {} \tepochs done {} \n'.format(number_of_sets,
+                                                                                            best_test_cost,
+                                                                                            epochs_done))
 
-                print('set {}: best test cost {}, epochs done {} \n'.format(number_of_sets,
-                                                                            best_test_cost,
-                                                                            epochs_done))
+                print('set {}: \t best test cost {} \t epochs done {} \n'.format(number_of_sets,
+                                                                                 best_test_cost,
+                                                                                 epochs_done))
+                end = datetime.now()
+                print('ended at {}'.format(end-start))
 
                 avg_test_cost += best_test_cost
 
@@ -177,8 +193,10 @@ def train_lstm(train, test, input_dim, hidden_dimension, columns, epochs, save_f
     y_hat = linear_lstm.apply(x)
     linear_lstm.initialize()
 
-    c = AbsolutePercentageError().apply(y, y_hat)
-    # c = SquaredError().apply(y, y_hat)
+    c_test = AbsolutePercentageError().apply(y, y_hat)
+    c_test.name = 'mape'
+
+    c = SquaredError().apply(y, y_hat)
     c.name = 'cost'
 
     cg = ComputationGraph(c)
@@ -189,13 +207,25 @@ def train_lstm(train, test, input_dim, hidden_dimension, columns, epochs, save_f
         else:
             return current_value
 
-    extensions = [DataStreamMonitoring(variables=[c], data_stream=stream_test, prefix='test'),
-                  TrainingDataMonitoring(variables=[c], prefix='train', after_epoch=True),
-                  FinishAfter(after_n_epochs=epochs),
-                  # Printing(),
-                  # ProgressBar(),
-                  TrackTheBest('test_cost', choose_best=one_perc_min),
-                  FinishIfNoImprovementAfter('test_cost_best_so_far', epochs=1000)]
+    extensions = []
+
+    extensions.append(DataStreamMonitoring(variables=[c],
+                                           data_stream=stream_test,
+                                           prefix='test',
+                                           after_epoch=False,
+                                           every_n_epochs=100))
+
+    extensions.append(TrainingDataMonitoring(variables=[c],
+                                             prefix='train',
+                                             after_epoch=True))
+
+    extensions.append(FinishAfter(after_n_epochs=epochs))
+
+    # extensions.append(Printing())
+    # extensions.append(ProgressBar())
+
+    extensions.append(TrackTheBest('test_cost', choose_best=one_perc_min))
+    extensions.append(FinishIfNoImprovementAfter('test_cost_best_so_far', epochs=500))
 
     # Save only parameters, not the whole main loop and only when best_test_cost is updated
     checkpoint = Checkpoint(save_file, save_main_loop=False, after_training=False)
@@ -203,12 +233,24 @@ def train_lstm(train, test, input_dim, hidden_dimension, columns, epochs, save_f
     extensions.append(checkpoint)
 
     if BOKEH_AVAILABLE:
-        extensions.append(Plot(execution_name, channels=[['train_cost', 'test_cost']]))
+        extensions.append(Plot(execution_name, channels=[['train_cost',
+                                                          'test_cost']]))
 
-    algorithm = GradientDescent(cost=c, parameters=cg.parameters, step_rule=Adam())
+    step_rule = Adam()
+    # step_rule = None
+
+    algorithm = GradientDescent(cost=c, parameters=cg.parameters, step_rule=step_rule)
     main_loop = MainLoop(algorithm, stream_train, model=Model(c), extensions=extensions)
     main_loop.run()
 
-    return main_loop.log.status['best_test_cost'], main_loop.log.status['epochs_done']
+    test_mape = 0
+    with open(save_file, 'rb') as file:
+        parameters = load_parameters(file)
+        model = main_loop.model
+        model.set_parameter_values(parameters)
+        ev = DatasetEvaluator([c_test])
+        test_mape = ev.evaluate(stream_test)['mape']
+
+    return test_mape, main_loop.log.status['epochs_done']
 
 
