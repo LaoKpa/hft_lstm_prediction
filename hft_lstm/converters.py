@@ -171,14 +171,14 @@ class SlidingWindowPandasIterator(PandasDataIterator):
         return train, test
 
 
-def build_stream(data, columns=None):
+def build_stream(data, batch_size, columns=None):
     if columns is None:
         columns = ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
     dataset = IndexableDataset(indexables=OrderedDict([('x', data[columns].values),
                                                        ('y', data['CloseTarget'].values)]))
     size = len(dataset.indexables[0])
     stream = DataStream(dataset=dataset,
-                        iteration_scheme=SequentialScheme(examples=range(size), batch_size=size))
+                        iteration_scheme=SequentialScheme(examples=range(size), batch_size=batch_size))
 
     stream = Mapping(stream, add_axes)
     stream = Cast(stream, theano.config.floatX)
