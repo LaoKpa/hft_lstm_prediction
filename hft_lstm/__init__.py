@@ -91,7 +91,7 @@ def main(save_path, data_path, lstm_dim, columns, batch_size, num_epochs, plot):
             avg_test_cost = 0
             number_of_sets = 0
 
-            execution_name = 'lstm_{}_{}_{}'.format(company, key, dimension)
+            execution_name = 'lstm_{}_{}_{}_{}'.format(company, key, dimension, batch_size)
             save_file_pre = save_path + execution_name
 
             report_file.write('\n***********************************\n')
