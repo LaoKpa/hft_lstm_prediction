@@ -78,7 +78,7 @@ def main(save_path, data_path, lstm_dim, columns, batch_size, num_epochs, plot):
 
     columns_dict = {columns: columns_dict[columns]}
 
-    report_file.write('starting lstm training for data file {} \n'.format(datafile))
+    report_file.write('starting lstm training for data file {} for batch size {}\n'.format(datafile, batch_size))
 
     for key, columns in columns_dict.iteritems():
         report_file.write('\n*****************************************************************************\n')
