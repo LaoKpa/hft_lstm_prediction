@@ -48,18 +48,29 @@ def main(save_path, data_path, lstm_dim, columns, batch_size, num_epochs, plot):
     if save_path.endswith('//') is False:
         save_path += '//'
 
-    # company = 'petr'
-    company = 'vale'
+    company = 'petr'
+    # company = 'vale'
 
     report_file = open("report", "a+")
 
     datafile = 'dados_{}.csv'.format(company)
 
+    # modo = 'conj'
+
+    # sw_iterator = SlidingWindowPandasIterator(data_path=data_path + datafile,
+    #                                           normalize=True,
+    #                                           normalize_target=False,
+    #                                           train_size=pd.Timedelta(days=21),
+    #                                           test_size=pd.Timedelta(days=7),
+    #                                           step_size=pd.Timedelta(days=7))
+
+    modo = 'todos'
+
     sw_iterator = SlidingWindowPandasIterator(data_path=data_path + datafile,
                                               normalize=True,
                                               normalize_target=False,
-                                              train_size=pd.Timedelta(days=21),
-                                              test_size=pd.Timedelta(days=7),
+                                              train_size=pd.Timedelta(days=209),
+                                              test_size=pd.Timedelta(days=80),
                                               step_size=pd.Timedelta(days=7))
 
     columns_dict = {
@@ -76,7 +87,7 @@ def main(save_path, data_path, lstm_dim, columns, batch_size, num_epochs, plot):
                     11: ['Open', 'High', 'Low', 'Close', 'Qty', 'Vol']
     }  # 11
 
-    columns_dict = {columns: columns_dict[columns]}
+    columns_dict = {column: columns_dict[column] for column in columns}
 
     report_file.write('starting lstm training for data file {} for batch size {}\n'.format(datafile, batch_size))
 
@@ -91,7 +102,7 @@ def main(save_path, data_path, lstm_dim, columns, batch_size, num_epochs, plot):
             avg_test_cost = 0
             number_of_sets = 0
 
-            execution_name = 'lstm_{}_{}_{}_{}'.format(company, key, dimension, batch_size)
+            execution_name = 'lstm_{}_{}_{}_{}_{}'.format(modo, company, key, dimension, batch_size)
             save_file_pre = save_path + execution_name
 
             report_file.write('\n***********************************\n')

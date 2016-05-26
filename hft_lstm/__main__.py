@@ -13,9 +13,9 @@ if __name__ == "__main__":
                         help="Path to save the model")
     parser.add_argument("--data-path", default="C:\\Users\\tiago\\PycharmProjects\\hft_lstm_prediction\\hft_data\\", nargs="?",
                         help="Path to HFT data")
-    parser.add_argument("--lstm-dim", type=list, default=[1, 5],
+    parser.add_argument("--lstm-dim", type=list, default=[1, 5, 10, 20, 50],
                         help="Number of hidden units in the LSTM layer.")
-    parser.add_argument("--columns", type=int, default=1,
+    parser.add_argument("--columns", type=list, default=[2],
                         help="Which column set to execute.")
     parser.add_argument("--batch-size", type=int, default=50,
                         help="Number of examples in a single batch.")
